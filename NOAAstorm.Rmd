@@ -1,17 +1,79 @@
 Title
 ========================================================
 
+# Synopsis
 This is an R Markdown document. Markdown is a simple formatting syntax for authoring web pages (click the **Help** toolbar button for more details on using R Markdown).
 
+# Data Processing
 When you click the **Knit HTML** button a web page will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
 
-```{r}
-summary(cars)
+```{r dataProcessing}
+# data file download and processing
+# set download url
+furl <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+
+# set filename
+fname <- "NOAAstorm.csv.bz2"
+
+# download file
+download.file(furl, fname, method = "curl" )
+
+# unzip file and load into data frame
+stormdata <- read.csv(bzfile("NOAAstorm.csv.bz2"))
 ```
 
-You can also embed plots, for example:
-
-```{r fig.width=7, fig.height=6}
-plot(cars)
+```{r stormStructure}
+str(stormdata)
 ```
+```{r stormSubset}
+library(sqldf)
+# subset data to pick out variables of interest for analysis
+# TRANSFORM  PROPDMGEXP & CROPDMG variables from Char to Numeric
+stormstaging <- sqldf("select EVTYPE, FATALITIES, INJURIES, PROPDMG, 
+                     CASE PROPDMGEXP WHEN 'H' THEN 100
+                                     WHEN 'K' THEN 1000
+                                     WHEN 'M' THEN 1000000
+                                     WHEN 'B' THEN 1000000000
+                                     ELSE 1
+                                     END PROPDMGMULTIPLIER,
+                     CROPDMG,
+                     CASE CROPDMGEXP WHEN 'H' THEN 100
+                                     WHEN 'K' THEN 1000
+                                     WHEN 'M' THEN 1000000
+                                     WHEN 'B' THEN 1000000000
+                                     ELSE 1
+                                     END CROPDMGMULTIPLIER from stormdata")
+names(stormstaging)
+# create transformed data frame
+stormaggregate <- sqldf("select EVTYPE, FATALITIES, INJURIES,
+                           FATALITIES + INJURIES HUMANDMG,
+                           PROPDMG * PROPDMGMULTIPLIER TOTPROPDMG,
+                           CROPDMG* CROPDMGMULTIPLIER TOTCROPDMG,
+                           (PROPDMG * PROPDMGMULTIPLIER + 
+                            CROPDMG* CROPDMGMULTIPLIER) ECODMG
+                   from stormstaging")
+names(stormaggregate)
+```
+# Results
+```{r stormAnalysis}
+# Total Economic Damage grouped by event type
+ecodmg <- sqldf("select EVTYPE, SUM(TOTPROPDMG) TOTECODMG
+                 from stormaggregate
+                 group by EVTYPE")
+# Print Top 10 Events causing maximum economic damage
+sqldf("select EVTYPE Event, TOTECODMG EconomicDamage$
+       from ecodmg
+       order by TOTECODMG desc limit 10")
+
+# Total Human Damage grouped by event type
+humandmg <- sqldf("select EVTYPE, SUM(HUMANDMG) TOTHUMDMG
+                   from stormaggregate
+                   group by EVTYPE")
+
+# Top 10 Events causing maximum human damage
+sqldf(" select EVTYPE Event, TOTHUMDMG Humans
+        from humandmg
+        order by TOTHUMDMG desc limit 10")
+```
+
 
