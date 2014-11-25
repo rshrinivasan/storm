@@ -1,11 +1,30 @@
-Title
+Which natural events are most harmful to population health and economy?
 ========================================================
 
 # Synopsis
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring web pages (click the **Help** toolbar button for more details on using R Markdown).
+This analysis examines the United State National Oceanic and Atmospheric
+Administration's (NOAA) storm database to determine the events that are most 
+harmful to population health and economy. Findings indicate that floods are 
+responsible for the maximum damage to the economy in terms of combined property
+and crop damages, and tornadoes are the most devastating to population health 
+in terms of combined fatalities and injuries. In terms of percentages, floods 
+are responsible for **31.5%** of the total economic damage and tornadoes are 
+responsible for **62.3%** of the damage to population health.
+
+```{r setGlobalOptions}
+opts_chunk$set(echo = TRUE)
+# disable scientific notation
+options(scipen = 9, warn = -1)
+```
 
 # Data Processing
-When you click the **Knit HTML** button a web page will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+The links to download the files necessary for this analysis are given below:
+- [Storm Data](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2)
+- [Storm Data Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)
+- [FAQ](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf)
+
+The data file is a BZip compressed archive. File is uncompressed and loaded 
+into a data frame using the bzfile and read.csv functions.
 
 ```{r dataProcessing}
 # data file download and processing
@@ -18,15 +37,38 @@ fname <- "NOAAstorm.csv.bz2"
 # download file
 download.file(furl, fname, method = "curl" )
 
+# download documentation
+download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf", "NOAAStorm_doc.pdf", method ="curl")
+
+# download FAQ file
+download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf", "NOAAStorm_FAQ.pdf", method ="curl")
+
 # unzip file and load into data frame
 stormdata <- read.csv(bzfile("NOAAstorm.csv.bz2"))
 ```
 
+Structure of the data can be analyzed by the str command
 ```{r stormStructure}
 str(stormdata)
 ```
-```{r stormSubset}
+As reflected by the output of the str command, the dataset contains 902297
+observations of 37 variables. The variables that are of interest to us in this 
+analysis are EVTYPE, FATALITIES, INJURIES, PROPDMG, PROPDMGEXP, CROPDMG, and
+CROPDMGEXP. FATALITES and INJURIES are numeric variables that indicate the 
+magnitude of damage to population health. PROPDMG and CROPDMG are numeric 
+variables that store the value for property damage and crop damage respectively,
+these variables need to be combined with an exponent that is stored in the 
+PROPDMGEXP and CROPDMGEXP variables. The exponent variables store strings that
+map to a numeric exponent. Values of H, T, M and B map to Hundreds, Thousands,
+Millions and Billions respectively.
+
+```{r}
+# we will use the sqldf package to manipulate the dataset
 library(sqldf)
+```
+
+```{r stormSubset}
+
 # subset data to pick out variables of interest for analysis
 # TRANSFORM  PROPDMGEXP & CROPDMG variables from Char to Numeric
 stormstaging <- sqldf("select EVTYPE, FATALITIES, INJURIES, PROPDMG, 
@@ -44,36 +86,77 @@ stormstaging <- sqldf("select EVTYPE, FATALITIES, INJURIES, PROPDMG,
                                      ELSE 1
                                      END CROPDMGMULTIPLIER from stormdata")
 names(stormstaging)
+
 # create transformed data frame
 stormaggregate <- sqldf("select EVTYPE, FATALITIES, INJURIES,
-                           FATALITIES + INJURIES HUMANDMG,
-                           PROPDMG * PROPDMGMULTIPLIER TOTPROPDMG,
-                           CROPDMG* CROPDMGMULTIPLIER TOTCROPDMG,
+                           (FATALITIES + INJURIES) HUMANDMG,
+                           (PROPDMG * PROPDMGMULTIPLIER) TOTPROPDMG,
+                           (CROPDMG* CROPDMGMULTIPLIER) TOTCROPDMG,
                            (PROPDMG * PROPDMGMULTIPLIER + 
                             CROPDMG* CROPDMGMULTIPLIER) ECODMG
                    from stormstaging")
 names(stormaggregate)
 ```
 # Results
-```{r stormAnalysis}
-# Total Economic Damage grouped by event type
-ecodmg <- sqldf("select EVTYPE, SUM(TOTPROPDMG) TOTECODMG
-                 from stormaggregate
-                 group by EVTYPE")
-# Print Top 10 Events causing maximum economic damage
-sqldf("select EVTYPE Event, TOTECODMG EconomicDamage$
-       from ecodmg
-       order by TOTECODMG desc limit 10")
+A plot of the impact to population health against the impact to the economy 
+should indicate whether events having a high population health impact also 
+impact the economy proportionally.
 
-# Total Human Damage grouped by event type
-humandmg <- sqldf("select EVTYPE, SUM(HUMANDMG) TOTHUMDMG
-                   from stormaggregate
-                   group by EVTYPE")
+```{r plot}
+forplot <- sqldf("select EVTYPE, SUM(ECODMG) TOTECODMG,
+                  SUM(HUMANDMG) TOTHUMDMG
+                  from stormaggregate
+                  group by EVTYPE")
 
-# Top 10 Events causing maximum human damage
-sqldf(" select EVTYPE Event, TOTHUMDMG Humans
-        from humandmg
-        order by TOTHUMDMG desc limit 10")
+# scatter plot with regression line
+m <- lm(forplot$TOTHUMDMG~forplot$TOTECODMG)
+plot(forplot$TOTHUMDMG, forplot$TOTECODMG,
+     main = "Events: Population Health Impact vs. Economic Impact",
+     xlab = "Population Health Impact (Fatalities + Injuries)",
+     ylab = "Economic Damage ($)",
+     col = forplot$EVTYPE)
+abline(m)
 ```
+
+As can be seen from the plot and the regression line, events having a high 
+impact to population health do not necessarily have a proportional impact on 
+the economy.
+
+The Top 10 Events having the most impact to the economy 
+(property damage + crop damage) are:
+```{r EcoDamage}
+# Print Top 10 Events causing maximum economic damage
+sqldf("select EVTYPE, TOTECODMG
+                 from forplot
+                 order by TOTECODMG desc limit 10")
+```
+The %age contribution of the top event to the total economic damage is:
+
+```{r ecodmg%}
+# Calculate % of Total for the top event causing max economic damage
+sqldf("select EVTYPE Event, (TOTECODMG / ecodmgtot) * 100 PercentToTotal
+       from forplot agg, (select sum(totecodmg) ecodmgtot from forplot) tot
+       order by TOTECODMG desc limit 1")
+```
+The Top 10 Events having the most impact on population health
+(Fatalities + Injuries) are:
+
+```{r PopDamage}
+# Print Top 10 Events causing maximum damage to population health
+sqldf("select EVTYPE, TOTHUMDMG
+                 from forplot
+                 order by TOTHUMDMG desc limit 10")
+```
+The %age contribution of the top event to the total impact on population health
+is:
+
+```{r popDamage%}
+# Calculate % of Total for the top event causing max impact to pop health
+sqldf("select EVTYPE Event, (TOTHUMDMG / humdmgtot) * 100 PercentToTotal
+       from forplot agg, (select sum(TOTHUMDMG) humdmgtot from forplot) tot
+       order by TOTHUMDMG desc limit 1")
+```
+
+
 
 
